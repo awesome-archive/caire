@@ -14,6 +14,19 @@ import (
 	"github.com/esimov/caire"
 )
 
+const HelpBanner = `
+┌─┐┌─┐┬┬─┐┌─┐
+│  ├─┤│├┬┘├┤
+└─┘┴ ┴┴┴└─└─┘
+
+Content aware image resize library.
+    Version: %s
+
+`
+
+// Version indicates the current build version.
+var Version string
+
 var (
 	// Flags
 	source         = flag.String("in", "", "Source")
@@ -23,17 +36,26 @@ var (
 	newWidth       = flag.Int("width", 0, "New width")
 	newHeight      = flag.Int("height", 0, "New height")
 	percentage     = flag.Bool("perc", false, "Reduce image by percentage")
+	square         = flag.Bool("square", false, "Reduce image to square dimensions")
 	debug          = flag.Bool("debug", false, "Use debugger")
+	scale          = flag.Bool("scale", false, "Proportional scaling")
+	faceDetect     = flag.Bool("face", false, "Use face detection")
+	faceAngle      = flag.Float64("angle", 0.0, "Plane rotated faces angle")
+	cascade        = flag.String("cc", "", "Cascade classifier")
 )
 
 func main() {
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, fmt.Sprintf(HelpBanner, Version))
+		flag.PrintDefaults()
+	}
 	flag.Parse()
 
 	if len(*source) == 0 || len(*destination) == 0 {
 		log.Fatal("Usage: caire -in input.jpg -out out.jpg")
 	}
 
-	if *newWidth > 0 || *newHeight > 0 || *percentage {
+	if *newWidth > 0 || *newHeight > 0 || *percentage || *square {
 		fs, err := os.Stat(*source)
 		if err != nil {
 			log.Fatalf("Unable to open source: %v", err)
@@ -47,7 +69,12 @@ func main() {
 			NewWidth:       *newWidth,
 			NewHeight:      *newHeight,
 			Percentage:     *percentage,
+			Square:         *square,
 			Debug:          *debug,
+			Scale:          *scale,
+			FaceDetect:     *faceDetect,
+			FaceAngle:      *faceAngle,
+			Classifier:     *cascade,
 		}
 		switch mode := fs.Mode(); {
 		case mode.IsDir():
@@ -68,7 +95,6 @@ func main() {
 			// Check if the image destination is a directory or a file.
 			if dst.Mode().IsRegular() {
 				log.Fatal("Please specify a directory as destination!")
-				os.Exit(2)
 			}
 			output, err := filepath.Abs(*destination)
 			if err != nil {
@@ -76,7 +102,7 @@ func main() {
 			}
 
 			// Range over all the image files and save them into a slice.
-			images := []string{}
+			var images []string
 			for _, f := range files {
 				ext := filepath.Ext(f.Name())
 				for _, iex := range extensions {
@@ -102,29 +128,38 @@ func main() {
 		}
 
 		for in, out := range toProcess {
-			file, err := os.Open(in)
+			inFile, err := os.Open(in)
 			if err != nil {
 				log.Fatalf("Unable to open source file: %v", err)
 			}
-			defer file.Close()
+
+			outFile, err := os.OpenFile(out, os.O_CREATE|os.O_WRONLY, 0755)
+			if err != nil {
+				log.Fatalf("Unable to open output file: %v", err)
+			}
 
 			s := new(spinner)
 			s.start("Processing...")
 
 			start := time.Now()
-			_, err = p.Process(file, out)
+			err = p.Process(inFile, outFile)
 			s.stop()
 
 			if err == nil {
-				fmt.Printf("\nRescaled in: \x1b[92m%.2fs\n", time.Since(start).Seconds())
-				fmt.Printf("\x1b[39mSaved as: \x1b[92m%s \n\n", path.Base(out))
+				fmt.Printf("\nRescaled in: \x1b[92m%.2fs\n\x1b[0m", time.Since(start).Seconds())
+				fmt.Printf("\x1b[39mSaved as: \x1b[92m%s \n\n\x1b[0m", path.Base(out))
 			} else {
-				fmt.Printf("\nError rescaling image: %s. Reason: %s\n", file.Name(), err.Error())
+				fmt.Printf("\nError rescaling image %s. Reason: %s\n", inFile.Name(), err.Error())
 			}
+
+			inFile.Close()
+			outFile.Close()
 		}
 	} else {
 		log.Fatal("\x1b[31mPlease provide a width, height or percentage for image rescaling!\x1b[39m")
 	}
+
+	caire.RemoveTempImage(caire.TempImage)
 }
 
 type spinner struct {
